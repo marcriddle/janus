@@ -12,10 +12,15 @@ GOCLEAN=$(GOCMD) clean
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 
-# Build the project
+# Build the project (Phase 1 by default)
 build:
 	mkdir -p bin
 	$(GOBUILD) -o $(BINARY_PATH) -v ./cmd/janus
+
+# Build with Phase 2 features
+build-phase2:
+	mkdir -p bin
+	$(GOBUILD) -tags phase2 -o $(BINARY_PATH) -v ./cmd/janus
 
 # Run tests
 test:
