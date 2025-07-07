@@ -1,3 +1,5 @@
+// +build !phase3
+
 package main
 
 import (

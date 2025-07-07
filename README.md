@@ -92,8 +92,24 @@ The tool follows a modular architecture:
 
 - [x] Phase 1: Two-point correlator with IP ID matching
 - [x] Phase 2: TCP stream reassembly and payload hashing
-- [ ] Phase 3: Advanced NAT detection and flow transformation tracking
+- [x] Phase 3: Advanced NAT detection and flow transformation tracking
 - [ ] Phase 4: N-point correlation and performance optimization
+
+## Phase 3: NAT Detection (Available)
+
+Phase 3 adds comprehensive NAT analysis capabilities. Build with:
+
+```bash
+go build -tags phase3 ./cmd/janus/
+```
+
+Features:
+- Advanced NAT type detection (SNAT, DNAT, PAT, CGNAT)
+- Stateful connection tracking
+- NAT behavior analysis
+- Detailed reporting and visualization
+
+See [docs/phase3-usage.md](docs/phase3-usage.md) for detailed usage.
 
 ## Current Limitations
 
