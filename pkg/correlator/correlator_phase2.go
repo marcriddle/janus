@@ -9,14 +9,11 @@ import (
 	"github.com/janus-project/janus/pkg/types"
 )
 
-// Correlator manages the correlation of packets across multiple capture points
-type Correlator struct {
-	// Map of flow key to flow trace
-	flows map[types.FlowKey]*types.FlowTrace
-	
-	// Map for IP ID based correlation
-	// Key is "srcIP:IPID", value is list of observations
-	ipidMap map[string][]*types.CapturePointInfo
+// Phase 2 additions to the Correlator
+
+// Enhanced Correlator fields for Phase 2
+type CorrelatorPhase2 struct {
+	*Correlator
 	
 	// Stream data from reassembly
 	streamData map[string]map[types.FlowKey]*stream.StreamData
@@ -26,83 +23,45 @@ type Correlator struct {
 	
 	// Configuration options
 	skipTTLOnly bool
-	
-	mu sync.RWMutex
 }
 
-// New creates a new correlator instance
-func New() *Correlator {
-	return &Correlator{
-		flows:      make(map[types.FlowKey]*types.FlowTrace),
-		ipidMap:    make(map[string][]*types.CapturePointInfo),
-		streamData: make(map[string]map[types.FlowKey]*stream.StreamData),
-		matcher:    NewPacketMatcher(),
-	}
-}
-
-// ProcessPacket processes a packet observation from a capture point
-func (c *Correlator) ProcessPacket(capture *types.CapturePointInfo) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Create flow key
-	flowKey := types.NewFlowKey(
-		capture.Packet.Protocol,
-		capture.Packet.SrcIP,
-		capture.Packet.SrcPort,
-		capture.Packet.DstIP,
-		capture.Packet.DstPort,
-	)
-
-	// Get or create flow trace
-	flow, exists := c.flows[flowKey]
-	if !exists {
-		flow = &types.FlowTrace{}
-		c.flows[flowKey] = flow
-	}
-
-	// Add observation to flow
-	flow.AddObservation(*capture)
-
-	// For Phase 1: Store in IP ID map for correlation
-	if capture.Packet.IPID != 0 {
-		ipidKey := fmt.Sprintf("%s:%d", capture.Packet.SrcIP, capture.Packet.IPID)
-		c.ipidMap[ipidKey] = append(c.ipidMap[ipidKey], capture)
+// NewPhase2 creates a new correlator with Phase 2 features
+func NewPhase2() *CorrelatorPhase2 {
+	return &CorrelatorPhase2{
+		Correlator:  New(),
+		streamData:  make(map[string]map[types.FlowKey]*stream.StreamData),
+		matcher:     NewPacketMatcher(),
+		skipTTLOnly: false,
 	}
 }
 
 // SetStreamData sets the reassembled stream data for a capture point
-func (c *Correlator) SetStreamData(pointID string, streams map[types.FlowKey]*stream.StreamData) {
+func (c *CorrelatorPhase2) SetStreamData(pointID string, streams map[types.FlowKey]*stream.StreamData) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.streamData[pointID] = streams
 }
 
 // SetSkipTTLOnly sets whether to skip packets that differ only by TTL (by 1 hop)
-func (c *Correlator) SetSkipTTLOnly(skip bool) {
+func (c *CorrelatorPhase2) SetSkipTTLOnly(skip bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.skipTTLOnly = skip
 }
 
-// CorrelationResult represents the result of correlating packets between two points
-type CorrelationResult struct {
-	Flow            types.FlowKey
-	Point1          types.CapturePointInfo
-	Point2          types.CapturePointInfo
-	Latency         time.Duration
-	PacketModified  bool
-	Modifications   []string
+// Enhanced CorrelationResult for Phase 2
+type CorrelationResultPhase2 struct {
+	CorrelationResult
 	MatchStrategy   string
 	MatchConfidence float64
 }
 
-// CorrelatePackets performs IP ID-based correlation between two capture points
-func (c *Correlator) CorrelatePackets(point1ID, point2ID string) []CorrelationResult {
+// CorrelatePacketsPhase2 performs enhanced correlation using multiple strategies
+func (c *CorrelatorPhase2) CorrelatePacketsPhase2(point1ID, point2ID string) []CorrelationResultPhase2 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	var results []CorrelationResult
+	var results []CorrelationResultPhase2
 
 	// For each IP ID group, look for packets from both capture points
 	for _, observations := range c.ipidMap {
@@ -123,16 +82,14 @@ func (c *Correlator) CorrelatePackets(point1ID, point2ID string) []CorrelationRe
 			// Use multi-strategy matching
 			for _, p1 := range point1Packets {
 				for _, p2 := range point2Packets {
-					matched, matchResult := c.packetsMatch(p1, p2)
+					matched, matchResult := c.packetsMatchPhase2(p1, p2)
 					if matched {
 						// Skip if configured to skip TTL-only differences
 						if c.skipTTLOnly && c.isTTLOnlyDifference(p1, p2) {
 							continue
 						}
 						
-						result := c.analyzeCorrelation(p1, p2)
-						result.MatchStrategy = matchResult.Description
-						result.MatchConfidence = matchResult.Confidence
+						result := c.analyzeCorrelationPhase2(p1, p2, matchResult)
 						results = append(results, result)
 					}
 				}
@@ -143,8 +100,8 @@ func (c *Correlator) CorrelatePackets(point1ID, point2ID string) []CorrelationRe
 	return results
 }
 
-// packetsMatch determines if two packet observations represent the same packet
-func (c *Correlator) packetsMatch(p1, p2 *types.CapturePointInfo) (bool, MatchResult) {
+// packetsMatchPhase2 uses multiple strategies to match packets
+func (c *CorrelatorPhase2) packetsMatchPhase2(p1, p2 *types.CapturePointInfo) (bool, MatchResult) {
 	// Build stream hash map for payload matching
 	streamHashes := make(map[types.FlowKey]string)
 	
@@ -178,58 +135,20 @@ func (c *Correlator) packetsMatch(p1, p2 *types.CapturePointInfo) (bool, MatchRe
 	return result.Matched, result
 }
 
-// analyzeCorrelation analyzes the correlation between two packet observations
-func (c *Correlator) analyzeCorrelation(p1, p2 *types.CapturePointInfo) CorrelationResult {
-	result := CorrelationResult{
-		Flow:   types.NewFlowKey(p1.Packet.Protocol, p1.Packet.SrcIP, p1.Packet.SrcPort, p1.Packet.DstIP, p1.Packet.DstPort),
-		Point1: *p1,
-		Point2: *p2,
+// analyzeCorrelationPhase2 creates an enhanced correlation result
+func (c *CorrelatorPhase2) analyzeCorrelationPhase2(p1, p2 *types.CapturePointInfo, matchResult MatchResult) CorrelationResultPhase2 {
+	// Use the base correlation analysis
+	baseResult := c.analyzeCorrelation(p1, p2)
+	
+	return CorrelationResultPhase2{
+		CorrelationResult: baseResult,
+		MatchStrategy:     matchResult.Description,
+		MatchConfidence:   matchResult.Confidence,
 	}
-
-	// Calculate latency
-	if p2.Packet.Timestamp.After(p1.Packet.Timestamp) {
-		result.Latency = p2.Packet.Timestamp.Sub(p1.Packet.Timestamp)
-	} else {
-		result.Latency = p1.Packet.Timestamp.Sub(p2.Packet.Timestamp)
-	}
-
-	// Check for modifications
-	result.Modifications = c.detectModifications(p1, p2)
-	result.PacketModified = len(result.Modifications) > 0
-
-	return result
-}
-
-// detectModifications detects changes between two packet observations
-func (c *Correlator) detectModifications(p1, p2 *types.CapturePointInfo) []string {
-	var mods []string
-
-	// Check TTL decrement
-	if p1.Packet.TTL != p2.Packet.TTL {
-		expectedTTL := p1.Packet.TTL - 1
-		if p2.Packet.TTL == expectedTTL {
-			mods = append(mods, fmt.Sprintf("TTL decremented: %d -> %d (1 hop)", p1.Packet.TTL, p2.Packet.TTL))
-		} else {
-			mods = append(mods, fmt.Sprintf("TTL changed: %d -> %d", p1.Packet.TTL, p2.Packet.TTL))
-		}
-	}
-
-	// Check for NAT (Phase 3 feature, but basic detection here)
-	if !p1.Packet.SrcIP.Equal(p2.Packet.SrcIP) || p1.Packet.SrcPort != p2.Packet.SrcPort {
-		mods = append(mods, fmt.Sprintf("Source NAT detected: %s:%d -> %s:%d", 
-			p1.Packet.SrcIP, p1.Packet.SrcPort, p2.Packet.SrcIP, p2.Packet.SrcPort))
-	}
-
-	if !p1.Packet.DstIP.Equal(p2.Packet.DstIP) || p1.Packet.DstPort != p2.Packet.DstPort {
-		mods = append(mods, fmt.Sprintf("Destination NAT detected: %s:%d -> %s:%d", 
-			p1.Packet.DstIP, p1.Packet.DstPort, p2.Packet.DstIP, p2.Packet.DstPort))
-	}
-
-	return mods
 }
 
 // isTTLOnlyDifference checks if two packets differ only by TTL (by exactly 1 hop)
-func (c *Correlator) isTTLOnlyDifference(p1, p2 *types.CapturePointInfo) bool {
+func (c *CorrelatorPhase2) isTTLOnlyDifference(p1, p2 *types.CapturePointInfo) bool {
 	// Check if TTL differs by exactly 1
 	ttlDiff := false
 	if p1.Packet.TTL > p2.Packet.TTL && p1.Packet.TTL-p2.Packet.TTL == 1 {
@@ -255,20 +174,20 @@ func (c *Correlator) isTTLOnlyDifference(p1, p2 *types.CapturePointInfo) bool {
 	return true
 }
 
-// GetFlowSummary returns a summary of all tracked flows
-func (c *Correlator) GetFlowSummary() map[types.FlowKey][]types.CapturePointInfo {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	summary := make(map[types.FlowKey][]types.CapturePointInfo)
-	for flowKey, flowTrace := range c.flows {
-		summary[flowKey] = flowTrace.GetPath()
-	}
-	return summary
+// StreamCorrelationResult represents correlated TCP streams
+type StreamCorrelationResult struct {
+	Flow1          types.FlowKey
+	Flow2          types.FlowKey
+	Stream1        *stream.StreamData
+	Stream2        *stream.StreamData
+	PayloadHash    string
+	Latency        time.Duration
+	StreamModified bool
+	Modifications  []string
 }
 
 // CorrelateStreams performs stream-based correlation between two capture points
-func (c *Correlator) CorrelateStreams(point1ID, point2ID string) []StreamCorrelationResult {
+func (c *CorrelatorPhase2) CorrelateStreams(point1ID, point2ID string) []StreamCorrelationResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -321,20 +240,8 @@ func (c *Correlator) CorrelateStreams(point1ID, point2ID string) []StreamCorrela
 	return results
 }
 
-// StreamCorrelationResult represents correlated TCP streams
-type StreamCorrelationResult struct {
-	Flow1          types.FlowKey
-	Flow2          types.FlowKey
-	Stream1        *stream.StreamData
-	Stream2        *stream.StreamData
-	PayloadHash    string
-	Latency        time.Duration
-	StreamModified bool
-	Modifications  []string
-}
-
 // detectStreamModifications detects changes between streams
-func (c *Correlator) detectStreamModifications(flow1 types.FlowKey, stream1 *stream.StreamData, 
+func (c *CorrelatorPhase2) detectStreamModifications(flow1 types.FlowKey, stream1 *stream.StreamData, 
 	flow2 types.FlowKey, stream2 *stream.StreamData) []string {
 	
 	var mods []string

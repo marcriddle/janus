@@ -1,4 +1,4 @@
-// +build !phase3
+// +build phase2
 
 package main
 
@@ -43,8 +43,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: %s -pcap1 <file1> -pcap2 <file2> [options]\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExample:\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  # Basic packet correlation (Phase 1)\n")
 		fmt.Fprintf(os.Stderr, "  %s -pcap1 capture1.pcap -pcap2 capture2.pcap -point1 container -point2 host\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\n  # Advanced stream-based correlation (Phase 2)\n")
+		fmt.Fprintf(os.Stderr, "  %s -pcap1 capture1.pcap -pcap2 capture2.pcap -stream -verbose\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -56,8 +59,8 @@ func main() {
 		point2 = filepath.Base(file2)
 	}
 
-	// Create correlator
-	corr := correlator.New()
+	// Create Phase 2 correlator
+	corr := correlator.NewPhase2()
 	
 	// Set skip TTL-only option if specified
 	if skipTTLOnly {
@@ -70,6 +73,11 @@ func main() {
 		return
 	}
 
+	// Regular packet-level analysis
+	runPacketAnalysis(file1, file2, point1, point2, corr, verbose)
+}
+
+func runPacketAnalysis(file1, file2, point1, point2 string, corr *correlator.CorrelatorPhase2, verbose bool) {
 	// Read first PCAP file
 	if verbose {
 		log.Printf("Reading PCAP file: %s (point: %s)", file1, point1)
@@ -102,12 +110,12 @@ func main() {
 		corr.ProcessPacket(pkt)
 	}
 
-	// Perform correlation
-	results := corr.CorrelatePackets(point1, point2)
+	// Perform enhanced correlation
+	results := corr.CorrelatePacketsPhase2(point1, point2)
 
 	// Print results
-	fmt.Printf("\nJanus Network Path Correlation Analysis\n")
-	fmt.Printf("=====================================\n")
+	fmt.Printf("\nJanus Network Path Correlation Analysis (Phase 2)\n")
+	fmt.Printf("===============================================\n")
 	fmt.Printf("Point 1: %s (%s)\n", point1, file1)
 	fmt.Printf("Point 2: %s (%s)\n", point2, file2)
 	fmt.Printf("\nCorrelation Results:\n")
@@ -119,10 +127,11 @@ func main() {
 		fmt.Println("- The captures don't contain the same traffic")
 		fmt.Println("- Time synchronization issues between capture hosts")
 		fmt.Println("- Packets were heavily modified (NAT, etc.)")
+		fmt.Println("- Try using -stream mode for TCP traffic")
 	} else {
 		for i, result := range results {
 			fmt.Printf("\n[%d] Flow: %s\n", i+1, result.Flow)
-			fmt.Printf("    Packet observed at both points (IP ID: %d)\n", result.Point1.Packet.IPID)
+			fmt.Printf("    Match Method: %s (Confidence: %.2f)\n", result.MatchStrategy, result.MatchConfidence)
 			fmt.Printf("    %s: %s\n", result.Point1.PointID, result.Point1.Packet.Timestamp.Format("15:04:05.000000"))
 			fmt.Printf("    %s: %s\n", result.Point2.PointID, result.Point2.Packet.Timestamp.Format("15:04:05.000000"))
 			fmt.Printf("    Latency: %v\n", result.Latency)
@@ -132,8 +141,6 @@ func main() {
 				for _, mod := range result.Modifications {
 					fmt.Printf("      - %s\n", mod)
 				}
-			} else {
-				fmt.Printf("    No modifications detected\n")
 			}
 		}
 		fmt.Printf("\nTotal correlations: %d\n", len(results))
@@ -153,7 +160,7 @@ func main() {
 	}
 }
 
-func runStreamAnalysis(file1, file2, point1, point2 string, corr *correlator.Correlator, verbose bool) {
+func runStreamAnalysis(file1, file2, point1, point2 string, corr *correlator.CorrelatorPhase2, verbose bool) {
 	// Create stream reassemblers
 	reassembler1 := stream.NewStreamReassembler(point1)
 	reassembler2 := stream.NewStreamReassembler(point2)
@@ -211,8 +218,8 @@ func runStreamAnalysis(file1, file2, point1, point2 string, corr *correlator.Cor
 	corr.SetStreamData(point2, reassembler2.GetStreams())
 
 	// Print results
-	fmt.Printf("\nJanus Network Path Correlation Analysis (Phase 2)\n")
-	fmt.Printf("===============================================\n")
+	fmt.Printf("\nJanus Network Path Correlation Analysis (Phase 2 - Stream Mode)\n")
+	fmt.Printf("=============================================================\n")
 	fmt.Printf("Point 1: %s (%s) - %d packets\n", point1, file1, count1)
 	fmt.Printf("Point 2: %s (%s) - %d packets\n", point2, file2, count2)
 
@@ -241,8 +248,8 @@ func runStreamAnalysis(file1, file2, point1, point2 string, corr *correlator.Cor
 		fmt.Printf("\nTotal stream correlations: %d\n", len(streamResults))
 	}
 
-	// Packet-level correlations with enhanced matching
-	packetResults := corr.CorrelatePackets(point1, point2)
+	// Enhanced packet-level correlations
+	packetResults := corr.CorrelatePacketsPhase2(point1, point2)
 	fmt.Printf("\n[Enhanced Packet Correlations]\n")
 	fmt.Printf("------------------------------\n")
 	
